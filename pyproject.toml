@@ -1,0 +1,81 @@
+[tool.poetry]
+name = "psqlpy-sqlalchemy"
+version = "0.1.0"
+description = ""
+authors = ["chandr-andr (Kiselev Aleksandr) <chandr@chandr.net>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.9"
+psqlpy = "^0.11.1"
+sqlalchemy = "^2.0.41"
+
+
+[tool.poetry.group.dev.dependencies]
+ruff = "^0.11.11"
+mypy = "^1.15.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.ruff.lint]
+preview = true
+extend-select = ["ALL"]
+extend-ignore = [
+  "D10",
+  "D203",
+  "D212",
+  "TD003",
+  "FIX",
+  "CPY",
+  "ANN",
+  "W191",
+  "E111",
+  "E114",
+  "E117",
+  "D206",
+  "D300",
+  "Q000",
+  "Q001",
+  "Q002",
+  "Q003",
+  "COM812",
+  "COM819",
+  "ISC001",
+  "ISC002",
+]
+
+[tool.ruff.lint.extend-per-file-ignores]
+"**/tests/*" = [
+  "S101",
+  "SLF001",
+]
+
+[tool.ruff.lint.pylint]
+max-args = 5
+
+[tool.ruff.lint.flake8-comprehensions]
+allow-dict-calls-with-keyword-arguments = true
+
+[tool.ruff.lint.isort]
+case-sensitive = true
+
+[tool.ruff.lint.flake8-builtins]
+builtins-ignorelist = ["id"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.mypy]
+strict = true
+ignore_missing_imports = true
+allow_subclassing_any = true
+allow_untyped_calls = true
+pretty = true
+show_error_codes = true
+implicit_reexport = true
+allow_untyped_decorators = true
+warn_return_any = false
+warn_unused_ignores = false
