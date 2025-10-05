@@ -14,6 +14,12 @@ sqlalchemy = "^2.0.41"
 [tool.poetry.group.dev.dependencies]
 ruff = "^0.11.11"
 mypy = "^1.15.0"
+pytest = "^8.4.2"
+sqlalchemy = "^2.0.43"
+
+[tool.poetry.plugins."sqlalchemy.dialects"]
+"postgresql.psqlpy" = "psqlpy_sqlalchemy.dialect:PSQLPyAsyncDialect"
+"postgresql+psqlpy" = "psqlpy_sqlalchemy.dialect:PSQLPyAsyncDialect"
 
 [build-system]
 requires = ["poetry-core"]
