@@ -268,11 +268,17 @@ class AsyncAdapt_psqlpy_connection(AsyncAdapt_dbapi_connection):
         self.isolation_level = self._isolation_setting = level
 
     def rollback(self) -> None:
-        await_only(self._connection.rollback())
+        if not self._transaction:
+            return
+
+        await_only(self._transaction.rollback())
         self._transaction = None
 
     def commit(self) -> None:
-        await_only(self._connection.commit())
+        if not self._transaction:
+            return
+
+        await_only(self._transaction.commit())
         self._transaction = None
 
     def close(self):
