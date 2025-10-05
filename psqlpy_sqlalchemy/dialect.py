@@ -2,11 +2,11 @@ from types import ModuleType
 import typing as t
 from collections import deque
 from collections.abc import MutableMapping, Sequence
-from typing import Any, Optional, Tuple
+from typing import Any, Optional, Tuple, Type
 
 import psqlpy
 from psqlpy import row_factories
-from sqlalchemy import URL, util
+from sqlalchemy import URL, util, Pool, AsyncAdaptedQueuePool
 from sqlalchemy.connectors.asyncio import (
     AsyncAdapt_dbapi_connection,
     AsyncAdapt_dbapi_cursor,
@@ -332,6 +332,9 @@ class PSQLPyAsyncDialect(PGDialect):
             sqltypes.BigInteger: _PGBigInteger,
         },
     )
+
+    def get_dialect_pool_class(self, url: URL) -> Type[Pool]:
+        return AsyncAdaptedQueuePool
 
     @classmethod
     def import_dbapi(cls) -> ModuleType:
