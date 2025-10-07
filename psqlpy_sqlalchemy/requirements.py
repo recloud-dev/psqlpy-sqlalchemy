@@ -6,7 +6,7 @@ from sqlalchemy.testing import exclusions
 class Requirements(SuiteRequirements):
     @property
     def array_type(self):
-        return exclusions.closed()
+        return exclusions.open()
 
     @property
     def bound_limit_offset(self):
@@ -26,14 +26,11 @@ class Requirements(SuiteRequirements):
 
     @property
     def nullable_booleans(self):
-        """Target database allows boolean columns to store NULL."""
-        # Access Yes/No doesn't allow null
-        return exclusions.closed()
+        return exclusions.open()
 
     @property
     def offset(self):
-        # Access does LIMIT (via TOP) but not OFFSET
-        return exclusions.closed()
+        return exclusions.open()
 
     @property
     def parens_in_union_contained_select_w_limit_offset(self):
@@ -77,9 +74,7 @@ class Requirements(SuiteRequirements):
 
     @property
     def unicode_ddl(self):
-        # Access won't let you drop a child table unless
-        # you drop the FK constraint first. Not worth the grief.
-        return exclusions.closed()
+        return exclusions.open()
 
     @property
     def uuid_data_type(self):
