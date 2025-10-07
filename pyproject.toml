@@ -9,13 +9,52 @@ readme = "README.md"
 python = "^3.9"
 psqlpy = "^0.11.1"
 sqlalchemy = "^2.0.41"
+greenlet = "^3.2.4"
 
+
+# https://github.com/nat-n/poethepoet
+[tool.poe]
+poetry_command = ""
+
+[tool.poe.tasks.configure]
+help = "configure all for local development (CLI commands with poe, pre commit hooks (update on project and install))"
+shell = "poetry self add 'poethepoet[poetry_plugin]' && pre-commit autoupdate && pre-commit install"
+
+[tool.poe.tasks.lint]
+help = "ruff linter for only changed files"
+shell = "ruff check $(git diff --name-only -- '*.py')"
+interpreter = ["powershell", "posix"]
+
+[tool.poe.tasks.format]
+shell = "ruff format ."
+interpreter = ["powershell", "posix"]
+
+[tool.poe.tasks.isort]
+help = "sort all files with ruff rules"
+control.expr = "sys.platform"
+
+[[tool.poe.tasks.isort.switch]]
+case = ["linux", "darwin"]
+interpreter = "posix"
+shell = "(git --no-pager diff --name-only -- '*.py' && git diff --staged --name-only -- '*.py') | xargs -r ruff check --select I --fix $file"
+
+[[tool.poe.tasks.isort.switch]]
+case = "win32"
+interpreter = "powershell"
+shell = "(git --no-pager diff --name-only -- '*.py' -and git diff --staged --name-only -- '*.py') | ForEach-Object { ruff check --select I --fix $_ $file}"
+
+[tool.poe.tasks.code-check]
+help = "run all code checking/formatting tools (format, isort, lint)"
+sequence = ["format", "isort", "lint"]
 
 [tool.poetry.group.dev.dependencies]
 ruff = "^0.11.11"
 mypy = "^1.15.0"
 pytest = "^8.4.2"
 sqlalchemy = "^2.0.43"
+pytest-anyio = "^0.0.0"
+pre-commit = "^4.3.0"
+poethepoet = {extras = ["poetry-plugin"], version = "^0.37.0"}
 
 [tool.poetry.plugins."sqlalchemy.dialects"]
 "postgresql.psqlpy" = "psqlpy_sqlalchemy.dialect:PSQLPyAsyncDialect"

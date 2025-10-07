@@ -88,3 +88,7 @@ class Requirements(SuiteRequirements):
     @property
     def view_column_reflection(self):
         return exclusions.open()
+
+    @property
+    def supports_distinct_on(self):
+        return exclusions.open()
