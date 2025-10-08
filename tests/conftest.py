@@ -1,7 +1,5 @@
-import os
-from sqlalchemy.dialects import registry
-
 import pytest
+from sqlalchemy.dialects import registry
 
 registry.register("postgresql.psqlpy", "psqlpy_sqlalchemy.dialect", "PSQLPyAsyncDialect")
 pytest.register_assert_rewrite("sqlalchemy.testing.assertions")
