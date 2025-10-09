@@ -87,3 +87,39 @@ class Requirements(SuiteRequirements):
     @property
     def supports_distinct_on(self):
         return exclusions.open()
+
+    @property
+    def ctes(self):
+        """Target database supports CTEs"""
+
+        return exclusions.open()
+
+    @property
+    def ctes_with_update_delete(self):
+        """target database supports CTES that ride on top of a normal UPDATE
+        or DELETE statement which refers to the CTE in a correlated subquery.
+
+        """
+
+        return exclusions.open()
+
+    @property
+    def ctes_with_values(self):
+        """target database supports CTES that ride on top of a VALUES
+        clause."""
+
+        return exclusions.open()
+
+    @property
+    def ctes_on_dml(self):
+        """target database supports CTES which consist of INSERT, UPDATE
+        or DELETE *within* the CTE, e.g. WITH x AS (UPDATE....)"""
+
+        return exclusions.open()
+
+    @property
+    def autoincrement_insert(self):
+        """target platform generates new surrogate integer primary key values
+        when insert() is executed, excluding the pk column."""
+
+        return exclusions.open()
