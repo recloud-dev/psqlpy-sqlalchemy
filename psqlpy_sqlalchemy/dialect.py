@@ -304,6 +304,10 @@ class PSQLPyAdaptDBAPI:
         creator_fn = kw.pop("async_creator_fn", self.psqlpy.connect)
         return AsyncAdapt_psqlpy_connection(self, await_only(creator_fn(*arg, **kw)))
 
+    @staticmethod
+    def Binary(value):
+        return memoryview(value)
+
 
 class PSQLPyAsyncDialect(PGDialect):
     driver = "psqlpy"
