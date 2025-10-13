@@ -12,6 +12,7 @@ from sqlalchemy.connectors.asyncio import (
     AsyncAdapt_dbapi_cursor,
     AsyncAdapt_dbapi_ss_cursor,
 )
+from sqlalchemy.dialects.postgresql import REGCLASS, OID
 from sqlalchemy.dialects.postgresql.base import INTERVAL, PGDialect, PGExecutionContext
 from sqlalchemy.dialects.postgresql.json import JSONPathType
 from sqlalchemy.sql import sqltypes
@@ -74,6 +75,13 @@ class _PGBigInteger(sqltypes.BigInteger):
 
 
 class _PGBoolean(sqltypes.Boolean):
+    render_bind_cast = True
+
+class _PGRegclass(REGCLASS):
+    render_bind_cast = True
+
+
+class _PGOID(OID):
     render_bind_cast = True
 
 
@@ -334,6 +342,8 @@ class PSQLPyAsyncDialect(PGDialect):
             sqltypes.Integer: _PGInteger,
             sqltypes.SmallInteger: _PGSmallInteger,
             sqltypes.BigInteger: _PGBigInteger,
+            REGCLASS: _PGRegclass,
+            OID: _PGOID,
         },
     )
 

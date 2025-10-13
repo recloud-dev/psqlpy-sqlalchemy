@@ -10,19 +10,19 @@ class Requirements(SuiteRequirements):
 
     @property
     def bound_limit_offset(self):
-        return exclusions.closed()
+        return exclusions.open()
 
     @property
     def date(self):
-        return exclusions.closed()
+        return exclusions.open()
 
     @property
     def datetime_microseconds(self):
-        return exclusions.closed()
+        return exclusions.open()
 
     @property
     def floats_to_four_decimals(self):
-        return exclusions.closed()
+        return exclusions.open()
 
     @property
     def nullable_booleans(self):
@@ -34,11 +34,11 @@ class Requirements(SuiteRequirements):
 
     @property
     def parens_in_union_contained_select_w_limit_offset(self):
-        return exclusions.closed()
+        return exclusions.open()
 
     @property
     def precision_generic_float_type(self):
-        return exclusions.closed()
+        return exclusions.open()
 
     @property
     def reflects_pk_names(self):
@@ -46,31 +46,31 @@ class Requirements(SuiteRequirements):
 
     @property
     def sql_expression_limit_offset(self):
-        return exclusions.closed()
+        return exclusions.open()
 
     @property
     def temp_table_reflection(self):
-        return exclusions.closed()
+        return exclusions.open()
 
     @property
     def temporary_tables(self):
-        return exclusions.closed()
+        return exclusions.open()
 
     @property
     def temporary_views(self):
-        return exclusions.closed()
+        return exclusions.open()
 
     @property
     def time(self):
-        return exclusions.closed()
+        return exclusions.open()
 
     @property
     def time_microseconds(self):
-        return exclusions.closed()
+        return exclusions.open()
 
     @property
     def timestamp_microseconds(self):
-        return exclusions.closed()
+        return exclusions.open()
 
     @property
     def unicode_ddl(self):
