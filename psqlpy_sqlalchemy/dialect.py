@@ -1,7 +1,7 @@
-from types import ModuleType
 import typing as t
 from collections import deque
 from collections.abc import MutableMapping, Sequence
+from types import ModuleType
 from typing import Any, Optional, Tuple, Type
 
 import psqlpy
@@ -20,6 +20,10 @@ from sqlalchemy.util.concurrency import await_only
 
 if t.TYPE_CHECKING:
     from sqlalchemy.engine.interfaces import DBAPICursor, _DBAPICursorDescription
+
+_DECIMAL_TYPES = (1231, 1700)
+_FLOAT_TYPES = (700, 701, 1021, 1022)
+_INT_TYPES = (20, 21, 23, 26, 1005, 1007, 1016)
 
 
 class _PGString(sqltypes.String):
@@ -77,11 +81,29 @@ class _PGBigInteger(sqltypes.BigInteger):
 class _PGBoolean(sqltypes.Boolean):
     render_bind_cast = True
 
+
 class _PGRegclass(REGCLASS):
     render_bind_cast = True
 
 
 class _PGOID(OID):
+    render_bind_cast = True
+
+
+class _PGNumericCommon(sqltypes.Numeric):
+    def bind_processor(self, dialect):
+        return None
+
+
+class _PGNumeric(_PGNumericCommon, sqltypes.NUMERIC):
+    render_bind_cast = True
+
+
+class _PGFloat(_PGNumericCommon, sqltypes.Float):
+    render_bind_cast = True
+
+
+class _PGDecimal(_PGNumericCommon, sqltypes.DECIMAL):
     render_bind_cast = True
 
 
@@ -171,11 +193,7 @@ class AsyncAdapt_psqlpy_cursor(AsyncAdapt_dbapi_cursor):
         if not adapt_connection._started:
             await adapt_connection._start_transaction()
 
-        return await self._connection.execute_many(
-            operation,
-            seq_of_parameters,
-            True,
-        )
+        return await self._connection.execute_many(operation, seq_of_parameters, prepared=True)
 
     def execute(
         self,
@@ -344,6 +362,9 @@ class PSQLPyAsyncDialect(PGDialect):
             sqltypes.BigInteger: _PGBigInteger,
             REGCLASS: _PGRegclass,
             OID: _PGOID,
+            sqltypes.Numeric: _PGNumeric,
+            sqltypes.Float: _PGFloat,
+            sqltypes.DECIMAL: _PGDecimal,
         },
     )
 
