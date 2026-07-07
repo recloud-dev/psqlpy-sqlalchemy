@@ -9,6 +9,71 @@ class Requirements(SuiteRequirements):
         return exclusions.open()
 
     @property
+    def json_type(self):
+        return exclusions.open()
+
+    @property
+    def datetime_interval(self):
+        return exclusions.open()
+
+    @property
+    def datetime_timezone(self):
+        return exclusions.open()
+
+    @property
+    def time_timezone(self):
+        return exclusions.open()
+
+    @property
+    def date_historic(self):
+        return exclusions.open()
+
+    @property
+    def datetime_historic(self):
+        return exclusions.open()
+
+    @property
+    def identity_columns(self):
+        return exclusions.open()
+
+    @property
+    def computed_columns(self):
+        return exclusions.open()
+
+    @property
+    def computed_columns_reflect_persisted(self):
+        return exclusions.open()
+
+    @property
+    def computed_columns_default_persisted(self):
+        # PostgreSQL GENERATED columns are always STORED.
+        return exclusions.open()
+
+    @property
+    def window_functions(self):
+        return exclusions.open()
+
+    @property
+    def table_value_constructor(self):
+        return exclusions.open()
+
+    @property
+    def isolation_level(self):
+        return exclusions.open()
+
+    @property
+    def autocommit(self):
+        return exclusions.open()
+
+    @property
+    def reflect_tables_no_columns(self):
+        return exclusions.open()
+
+    @property
+    def percent_schema_names(self):
+        return exclusions.open()
+
+    @property
     def bound_limit_offset(self):
         return exclusions.open()
 
@@ -53,6 +118,14 @@ class Requirements(SuiteRequirements):
         return exclusions.open()
 
     @property
+    def temp_table_names(self):
+        return exclusions.open()
+
+    @property
+    def has_temp_table(self):
+        return exclusions.open()
+
+    @property
     def temporary_tables(self):
         return exclusions.open()
 
@@ -78,6 +151,18 @@ class Requirements(SuiteRequirements):
 
     @property
     def uuid_data_type(self):
+        return exclusions.open()
+
+    @property
+    def views(self):
+        return exclusions.open()
+
+    @property
+    def unique_constraints_reflect_as_index(self):
+        return exclusions.open()
+
+    @property
+    def index_reflects_included_columns(self):
         return exclusions.open()
 
     @property
