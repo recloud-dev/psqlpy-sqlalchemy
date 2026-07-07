@@ -7,3 +7,6 @@ class NumericTest(_NumericTest):
         
     def test_render_literal_numeric(self, literal_round_trip):
         super().test_render_literal_numeric(literal_round_trip)
+        
+    def test_float_as_decimal(self, do_numeric_test):
+        super().test_float_as_decimal(do_numeric_test)
