@@ -323,6 +323,10 @@ class AsyncAdapt_psqlpy_cursor(AsyncAdapt_dbapi_cursor):
         if not adapt_connection._started:
             await adapt_connection._start_transaction()
 
+        await adapt_connection._invalidate_schema_cache(
+            self._invalidate_schema_cache_asof
+        )
+
         return await self._connection.execute_many(
             operation, seq_of_parameters, prepared=True
         )
@@ -351,6 +355,11 @@ class AsyncAdapt_psqlpy_ss_cursor(
         self._adapt_connection = adapt_connection
         self._connection = adapt_connection._connection
         self.await_ = adapt_connection.await_
+        self._rows = deque()
+        self._description = None
+        self._arraysize = 1
+        self._rowcount = -1
+        self._invalidate_schema_cache_asof = 0
 
         self._cursor = self._connection.cursor()
 
@@ -429,7 +438,7 @@ class AsyncAdapt_psqlpy_connection(AsyncAdapt_dbapi_connection):
 
         transaction = self._connection.transaction(
             isolation_level=self._isolation_setting,
-            read_variant=self.readonly or None,
+            read_variant=psqlpy.ReadVariant.ReadOnly if self.readonly else None,
             deferrable=self.deferrable,
         )
         await transaction.begin()
@@ -571,10 +580,7 @@ class PSQLPyAsyncDialect(PGDialect):
         dbapi_connection.set_isolation_level(self._isolation_lookup[level])
 
     def set_readonly(self, connection, value):
-        if value is True:
-            connection.readonly = psqlpy.ReadVariant.ReadOnly
-        else:
-            connection.readonly = psqlpy.ReadVariant.ReadWrite
+        connection.readonly = bool(value)
 
     def get_readonly(self, connection):
         return connection.readonly
@@ -586,9 +592,11 @@ class PSQLPyAsyncDialect(PGDialect):
         return connection.deferrable
 
     def is_disconnect(self, e, connection, cursor):
+        if isinstance(e, psqlpy_exceptions.BaseConnectionError):
+            return True
         if connection is not None:
             return connection._connection.is_closed()
-        return isinstance(e, psqlpy_exceptions.BaseConnectionError)
+        return False
 
     def create_connect_args(
         self,
