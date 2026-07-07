@@ -1,29 +1,64 @@
+import decimal
 import typing as t
+import uuid
 from collections import deque
 from collections.abc import MutableMapping, Sequence
 from types import ModuleType
 from typing import Any, Optional, Tuple, Type
 
 import psqlpy
-from psqlpy import row_factories
-from sqlalchemy import URL, util, Pool, AsyncAdaptedQueuePool
+from psqlpy import exceptions as psqlpy_exceptions
+from sqlalchemy import URL, AsyncAdaptedQueuePool, Pool, util
 from sqlalchemy.connectors.asyncio import (
     AsyncAdapt_dbapi_connection,
     AsyncAdapt_dbapi_cursor,
     AsyncAdapt_dbapi_ss_cursor,
 )
-from sqlalchemy.dialects.postgresql import REGCLASS, OID
+from sqlalchemy.dialects.postgresql import BYTEA, OID, REGCLASS
 from sqlalchemy.dialects.postgresql.base import INTERVAL, PGDialect, PGExecutionContext
-from sqlalchemy.dialects.postgresql.json import JSONPathType
+from sqlalchemy.dialects.postgresql.json import JSON, JSONB, JSONPathType
+from sqlalchemy.engine import processors
 from sqlalchemy.sql import sqltypes
 from sqlalchemy.util.concurrency import await_only
 
 if t.TYPE_CHECKING:
     from sqlalchemy.engine.interfaces import DBAPICursor, _DBAPICursorDescription
 
-_DECIMAL_TYPES = (1231, 1700)
-_FLOAT_TYPES = (700, 701, 1021, 1022)
-_INT_TYPES = (20, 21, 23, 26, 1005, 1007, 1016)
+# Sentinel stored on the connection when SQLAlchemy asks for AUTOCOMMIT: no
+# psqlpy transaction is opened and every statement auto-commits.
+_AUTOCOMMIT = "AUTOCOMMIT"
+
+# PEP-249 exception classes to lift from psqlpy.exceptions onto the DBAPI facade
+# (psqlpy re-exports only Error at the top level).
+_PEP249_EXCEPTIONS = (
+    "Error",
+    "InterfaceError",
+    "DatabaseError",
+    "DataError",
+    "OperationalError",
+    "IntegrityError",
+    "InternalError",
+    "ProgrammingError",
+    "NotSupportedError",
+)
+
+_SSL_MODE_MAP = {
+    "disable": psqlpy.SslMode.Disable,
+    "allow": psqlpy.SslMode.Allow,
+    "prefer": psqlpy.SslMode.Prefer,
+    "require": psqlpy.SslMode.Require,
+    "verify-ca": psqlpy.SslMode.VerifyCa,
+    "verify-full": psqlpy.SslMode.VerifyFull,
+}
+_TARGET_SESSION_ATTRS_MAP = {
+    "any": psqlpy.TargetSessionAttrs.Any,
+    "read-write": psqlpy.TargetSessionAttrs.ReadWrite,
+    "read-only": psqlpy.TargetSessionAttrs.ReadOnly,
+}
+_LOAD_BALANCE_HOSTS_MAP = {
+    "disable": psqlpy.LoadBalanceHosts.Disable,
+    "random": psqlpy.LoadBalanceHosts.Random,
+}
 
 
 class _PGString(sqltypes.String):
@@ -44,6 +79,18 @@ class _PGJSONStrIndexType(sqltypes.JSON.JSONStrIndexType):
 
 class _PGJSONPathType(JSONPathType):
     pass
+
+
+class _PGJSON(JSON):
+    # psqlpy decodes JSON/JSONB columns into Python objects already, so skip the
+    # base json.loads result processor.
+    def result_processor(self, dialect, coltype):
+        return None
+
+
+class _PGJSONB(JSONB):
+    def result_processor(self, dialect, coltype):
+        return None
 
 
 class _PGInterval(INTERVAL):
@@ -90,9 +137,30 @@ class _PGOID(OID):
     render_bind_cast = True
 
 
+class _PGLargeBinary(BYTEA):
+    # Emit $n::BYTEA so multi-row insertmanyvalues params type as bytea instead
+    # of being inferred as text.
+    render_bind_cast = True
+
+
 class _PGNumericCommon(sqltypes.Numeric):
+    # NUMERIC/DECIMAL columns: psqlpy encodes them only from Decimal and decodes
+    # them back as Decimal, so bind coerces to Decimal and result is a no-op
+    # unless the caller asked for float.
+    render_bind_cast = True
+
     def bind_processor(self, dialect):
-        return None
+        def process(value):
+            if value is None or isinstance(value, decimal.Decimal):
+                return value
+            return decimal.Decimal(str(value))
+
+        return process
+
+    def result_processor(self, dialect, coltype):
+        if self.asdecimal:
+            return None
+        return processors.to_float
 
 
 class _PGNumeric(_PGNumericCommon, sqltypes.NUMERIC):
@@ -100,16 +168,69 @@ class _PGNumeric(_PGNumericCommon, sqltypes.NUMERIC):
 
 
 class _PGFloat(_PGNumericCommon, sqltypes.Float):
+    # FLOAT columns are float8: psqlpy encodes/decodes them as Python float, so
+    # the coercions run the opposite way to NUMERIC.
     render_bind_cast = True
+
+    def bind_processor(self, dialect):
+        def process(value):
+            if value is None or isinstance(value, float):
+                return value
+            return float(value)
+
+        return process
+
+    def result_processor(self, dialect, coltype):
+        if self.asdecimal:
+            return processors.to_decimal_processor_factory(
+                decimal.Decimal, self._effective_decimal_return_scale
+            )
+        return None
 
 
 class _PGDecimal(_PGNumericCommon, sqltypes.DECIMAL):
     render_bind_cast = True
 
 
+class _PSQLPyUUID(PGDialect.colspecs[sqltypes.Uuid]):
+    def result_processor(self, dialect, coltype):
+        # PSQLPy returns UUID columns as str; rebuild uuid.UUID when as_uuid.
+        if self.as_uuid:
+
+            def process(value):
+                if value is not None and not isinstance(value, uuid.UUID):
+                    value = uuid.UUID(value)
+                return value
+
+            return process
+
+        def process(value):
+            if value is not None and isinstance(value, uuid.UUID):
+                value = str(value)
+            return value
+
+        return process
+
+
 class PGExecutionContext_psqlpy(PGExecutionContext):
     def create_server_side_cursor(self) -> "DBAPICursor":
         return self._dbapi_connection.cursor(server_side=True)
+
+    def pre_exec(self) -> None:
+        # DDL can change a table's result type out from under psqlpy's cached
+        # prepared plans; bump the dialect-wide marker so every connection drops
+        # its statement cache before its next prepare (mirrors asyncpg).
+        if self.isddl:
+            self.dialect._invalidate_schema_cache()
+        self.cursor._invalidate_schema_cache_asof = (
+            self.dialect._invalidate_schema_cache_asof
+        )
+
+    def handle_dbapi_exception(self, e: Exception) -> None:
+        if isinstance(e, self.dialect.dbapi.DatabaseError) and (
+            "cached plan must not change result type" in str(e)
+        ):
+            self.dialect._invalidate_schema_cache()
 
 
 class AsyncAdapt_psqlpy_cursor(AsyncAdapt_dbapi_cursor):
@@ -137,17 +258,25 @@ class AsyncAdapt_psqlpy_cursor(AsyncAdapt_dbapi_cursor):
         querystring: str,
         parameters: t.Union[t.Sequence[t.Any], t.Mapping[str, Any], None] = None,
     ) -> None:
-        if self._adapt_connection._transaction:
+        if not self._adapt_connection._started:
             await self._adapt_connection._start_transaction()
+
+        await self._adapt_connection._invalidate_schema_cache(
+            self._invalidate_schema_cache_asof
+        )
 
         prepared_stmt = await self._connection.prepare(
             querystring=querystring,
             parameters=parameters,
         )
+        # psqlpy.Column exposes only name and table_oid (no type OID), so the
+        # type_code slot stays None; result processors rely on native decoding.
+        # No columns means a non-returning statement: leave description None so
+        # SQLAlchemy reports returns_rows=False.
+        columns = prepared_stmt.columns()
         self._description = [
-            (column.name, column.table_oid, None, None, None, None, None)
-            for column in prepared_stmt.columns()
-        ]
+            (column.name, None, None, None, None, None, None) for column in columns
+        ] or None
 
         if self.server_side:
             self._cursor = self._connection.cursor(
@@ -159,11 +288,12 @@ class AsyncAdapt_psqlpy_cursor(AsyncAdapt_dbapi_cursor):
             return
 
         results = await prepared_stmt.execute()
-        rows: Tuple[Tuple[Any, ...], ...] = tuple(
-            tuple(value for _, value in row)
-            for row in results.row_factory(row_factories.tuple_row)
-        )
-        self._rows = deque(rows)
+        affected = results.rows_affected
+        self._rowcount = affected if affected is not None else -1
+        # result(as_tuple=True) reads values positionally, so duplicate column
+        # names survive (row_factory routes through a name-keyed dict and drops
+        # them).
+        self._rows = deque(results.result(as_tuple=True))
 
     @property
     def description(self) -> "Optional[_DBAPICursorDescription]":
@@ -193,7 +323,9 @@ class AsyncAdapt_psqlpy_cursor(AsyncAdapt_dbapi_cursor):
         if not adapt_connection._started:
             await adapt_connection._start_transaction()
 
-        return await self._connection.execute_many(operation, seq_of_parameters, prepared=True)
+        return await self._connection.execute_many(
+            operation, seq_of_parameters, prepared=True
+        )
 
     def execute(
         self,
@@ -226,10 +358,7 @@ class AsyncAdapt_psqlpy_ss_cursor(
         self,
         result: psqlpy.QueryResult,
     ) -> Tuple[Tuple[Any, ...], ...]:
-        return tuple(
-            tuple(value for _, value in row)
-            for row in result.row_factory(row_factories.tuple_row)
-        )
+        return tuple(result.result(as_tuple=True))
 
     def close(self):
         if self._cursor is not None:
@@ -284,28 +413,51 @@ class AsyncAdapt_psqlpy_connection(AsyncAdapt_dbapi_connection):
         self.deferrable = False
         self._transaction = None
         self._started = False
+        self._invalidate_schema_cache_asof = 0
+
+    async def _invalidate_schema_cache(self, asof: int) -> None:
+        # Drop psqlpy's prepared-statement cache once per DDL marker, so a plan
+        # cached before a table was redefined is never executed.
+        if asof > self._invalidate_schema_cache_asof:
+            await self._connection.clear_statement_cache()
+            self._invalidate_schema_cache_asof = asof
 
     async def _start_transaction(self) -> None:
-        transaction = self._connection.transaction()
+        if self._isolation_setting is _AUTOCOMMIT:
+            self._started = True
+            return
+
+        transaction = self._connection.transaction(
+            isolation_level=self._isolation_setting,
+            read_variant=self.readonly or None,
+            deferrable=self.deferrable,
+        )
         await transaction.begin()
         self._transaction = transaction
+        self._started = True
 
     def set_isolation_level(self, level):
+        if self._started:
+            self.rollback()
         self.isolation_level = self._isolation_setting = level
 
     def rollback(self) -> None:
-        if not self._transaction:
+        if not self._started:
             return
 
-        await_only(self._transaction.rollback())
+        if self._transaction is not None:
+            await_only(self._transaction.rollback())
         self._transaction = None
+        self._started = False
 
     def commit(self) -> None:
-        if not self._transaction:
+        if not self._started:
             return
 
-        await_only(self._transaction.commit())
+        if self._transaction is not None:
+            await_only(self._transaction.commit())
         self._transaction = None
+        self._started = False
 
     def close(self):
         self.rollback()
@@ -326,13 +478,20 @@ class PSQLPyAdaptDBAPI:
             if k != "connect":
                 self.__dict__[k] = v
 
+        # SQLAlchemy expects the full PEP-249 hierarchy on the DBAPI module for
+        # error wrapping and is_disconnect; psqlpy only re-exports Error itself.
+        self.Warning = psqlpy_exceptions.WarningError
+        for name in _PEP249_EXCEPTIONS:
+            self.__dict__[name] = getattr(psqlpy_exceptions, name)
+
     def connect(self, *arg, **kw):
         creator_fn = kw.pop("async_creator_fn", self.psqlpy.connect)
         return AsyncAdapt_psqlpy_connection(self, await_only(creator_fn(*arg, **kw)))
 
     @staticmethod
     def Binary(value):
-        return memoryview(value)
+        # psqlpy encodes bytea from bytes; it has no memoryview converter.
+        return bytes(value)
 
 
 class PSQLPyAsyncDialect(PGDialect):
@@ -343,12 +502,17 @@ class PSQLPyAsyncDialect(PGDialect):
     supports_statement_cache = True
     supports_server_side_cursors = True
     default_paramstyle = "numeric_dollar"
-    supports_sane_multi_rowcount = True
+    # QueryResult reports the command-tag row count, so single-statement
+    # rowcount is accurate; execute_many discards it, so multi stays unset.
+    supports_sane_rowcount = True
+    supports_sane_multi_rowcount = False
 
     colspecs = util.update_copy(
         PGDialect.colspecs,
         {
             sqltypes.String: _PGString,
+            sqltypes.JSON: _PGJSON,
+            JSONB: _PGJSONB,
             sqltypes.JSON.JSONPathType: _PGJSONPathType,
             sqltypes.JSON.JSONIntIndexType: _PGJSONIntIndexType,
             sqltypes.JSON.JSONStrIndexType: _PGJSONStrIndexType,
@@ -365,8 +529,19 @@ class PSQLPyAsyncDialect(PGDialect):
             sqltypes.Numeric: _PGNumeric,
             sqltypes.Float: _PGFloat,
             sqltypes.DECIMAL: _PGDecimal,
+            sqltypes.Uuid: _PSQLPyUUID,
+            sqltypes.LargeBinary: _PGLargeBinary,
         },
     )
+
+    def __init__(self, *args, **kw):
+        super().__init__(*args, **kw)
+        # Monotonic marker bumped on every DDL; connections clear their psqlpy
+        # statement cache when they observe a newer value.
+        self._invalidate_schema_cache_asof = 0
+
+    def _invalidate_schema_cache(self) -> None:
+        self._invalidate_schema_cache_asof += 1
 
     def get_dialect_pool_class(self, url: URL) -> Type[Pool]:
         return AsyncAdaptedQueuePool
@@ -376,12 +551,17 @@ class PSQLPyAsyncDialect(PGDialect):
         return t.cast(ModuleType, PSQLPyAdaptDBAPI(__import__("psqlpy")))
 
     @util.memoized_property
-    def _isolation_lookup(self) -> t.Dict[str, psqlpy.IsolationLevel]:
+    def _isolation_lookup(self) -> t.Dict[str, t.Any]:
         return {
+            "AUTOCOMMIT": _AUTOCOMMIT,
             "READ COMMITTED": psqlpy.IsolationLevel.ReadCommitted,
+            "READ UNCOMMITTED": psqlpy.IsolationLevel.ReadUncommitted,
             "REPEATABLE READ": psqlpy.IsolationLevel.RepeatableRead,
             "SERIALIZABLE": psqlpy.IsolationLevel.Serializable,
         }
+
+    def get_isolation_level_values(self, dbapi_connection):
+        return list(self._isolation_lookup)
 
     def set_isolation_level(
         self,
@@ -405,21 +585,39 @@ class PSQLPyAsyncDialect(PGDialect):
     def get_deferrable(self, connection):
         return connection.deferrable
 
+    def is_disconnect(self, e, connection, cursor):
+        if connection is not None:
+            return connection._connection.is_closed()
+        return isinstance(e, psqlpy_exceptions.BaseConnectionError)
+
     def create_connect_args(
         self,
         url: URL,
     ) -> Tuple[Sequence[str], MutableMapping[str, Any]]:
-        opts = url.translate_connect_args()
-        return (
-            [],
-            {
-                "host": opts.get("host"),
-                "port": opts.get("port"),
-                "username": opts.get("username"),
-                "db_name": opts.get("database"),
-                "password": opts.get("password"),
-            },
-        )
+        opts = url.translate_connect_args(database="db_name")
+        kwargs = {k: v for k, v in opts.items() if v is not None}
+
+        query = url.query
+        if "ssl_mode" in query:
+            kwargs["ssl_mode"] = _SSL_MODE_MAP[query["ssl_mode"].lower()]
+        if "ca_file" in query:
+            kwargs["ca_file"] = query["ca_file"]
+        if "application_name" in query:
+            kwargs["application_name"] = query["application_name"]
+        if "connect_timeout" in query:
+            kwargs["connect_timeout_sec"] = int(query["connect_timeout"])
+        if "target_session_attrs" in query:
+            kwargs["target_session_attrs"] = _TARGET_SESSION_ATTRS_MAP[
+                query["target_session_attrs"].lower()
+            ]
+        if "load_balance_hosts" in query:
+            kwargs["load_balance_hosts"] = _LOAD_BALANCE_HOSTS_MAP[
+                query["load_balance_hosts"].lower()
+            ]
+        if "options" in query:
+            kwargs["options"] = query["options"]
+
+        return ([], kwargs)
 
 
 dialect = PSQLPyAsyncDialect
